@@ -54,6 +54,7 @@ public:
 
 
 private:
+	int m_procMode; //0=best marker, 1=all marker
 	int m_cameraMode; // 0=main cam, 1=sub cam (toggle enter key)
 	cCamera *m_camera[4];
 	LPD3DXSPRITE m_sprite;
@@ -98,6 +99,7 @@ cViewer::cViewer() :
 	, m_cameraMode(0)
 	, m_toggleUpdateTm(true)
 	, m_box(0)
+	, m_procMode(0)
 {
 	m_windowName = L"AR Camera2";
 	const RECT r = { 0, 0, WINSIZE_X, WINSIZE_Y };
@@ -241,8 +243,26 @@ void cViewer::OnUpdate(const float elapseT)
 	vector< int > ids;
 	vector< vector< Point2f > > corners, rejected;
 	vector< Vec3d > rvecs, tvecs;
+
+	// 가장 최근에 인식한 마커 자세와 가장 비슷한 마커를 인식한다.
+	Vector3 markerDir(0, 0, 0);
+	if (!m_markers.empty())
+	{
+		for (auto &m : m_markers)
+		{
+			if (m.id == 102)
+			{
+				markerDir = Vector3(1, 0, 0).MultiplyNormal(m.tm);
+				break;
+			}
+		}
+	}
+
 	m_markers.clear();
 	set<int> dupTest;//중복테스트
+
+	sMarker bestMarker = { -1 };
+	float maxDot = -FLT_MAX;
 
 	// detect markers and estimate pose
 	aruco::detectMarkers(image, m_dictionary, corners, ids, m_detectorParams, rejected);
@@ -254,9 +274,9 @@ void cViewer::OnUpdate(const float elapseT)
 
 		for (unsigned int i = 0; i < ids.size(); i++)
 		{
-			if (dupTest.find(ids[i]) != dupTest.end())
-				continue;
-			dupTest.insert(ids[i]);
+			//if (dupTest.find(ids[i]) != dupTest.end())
+			//	continue;
+			//dupTest.insert(ids[i]);
 
 			aruco::drawAxis(image, m_camMatrix, m_distCoeffs, rvecs[i], tvecs[i], m_markerLength * 0.5f);
 
@@ -288,9 +308,38 @@ void cViewer::OnUpdate(const float elapseT)
 
 			m_zealotCameraView = rot2 * tm * trans;
 
-			m_markers.push_back({ ids[i], m_zealotCameraView });
+			if (m_procMode == 0)
+			{
+				if ((ids[i] == 102) && !markerDir.IsEmpty())
+				{
+					Vector3 v = Vector3(1, 0, 0).MultiplyNormal(m_zealotCameraView);
+					const float d = markerDir.DotProduct(v);
+					if (maxDot < d)
+					{
+						maxDot = d;
+						bestMarker.id = ids[i];
+						bestMarker.tm = m_zealotCameraView;
+					}
+				}
+				else
+				{
+					m_markers.push_back({ ids[i], m_zealotCameraView });
+				}
+			}
+			else
+			{
+				m_markers.push_back({ ids[i], m_zealotCameraView });
+			}
 		}
 	}
+
+	if (m_procMode == 0)
+	{
+		if (bestMarker.id != -1)
+			m_markers.push_back(bestMarker);
+	}
+
+	//m_markers.push_back({ ids[i], m_zealotCameraView });
 
 	// display camera image to DirectX Texture
 	D3DLOCKED_RECT lockRect;
@@ -488,6 +537,9 @@ void cViewer::OnMessageProc(UINT message, WPARAM wParam, LPARAM lParam)
 		case '2': m_cameraMode = 1; break;
 		case '3': m_cameraMode = 2; break;
 		case '4': m_cameraMode = 3; break;
+
+		case VK_F1: m_procMode = 0; break;
+		case VK_F2: m_procMode = 1; break;
 		}
 		break;
 
